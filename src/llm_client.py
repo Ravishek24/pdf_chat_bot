@@ -123,11 +123,21 @@ class LocalTransformerLLM:
         """Test if the loaded model works"""
         try:
             if self.model_type == "seq2seq":
-                result = self.pipeline("What is AI?", max_length=50, num_return_sequences=1)
+                # Test with a simple Q&A prompt
+                test_prompt = "Context: This is a test document about artificial intelligence.\n\nQuestion: What is AI?\n\nAnswer:"
+                result = self.pipeline(test_prompt, max_length=50, num_return_sequences=1)
             else:
-                result = self.pipeline("Hello", max_new_tokens=10, num_return_sequences=1)
+                # Test with a simple generation prompt
+                test_prompt = "Based on this document content:\n\nThis is a test document about artificial intelligence.\n\nQuestion: What is AI?\n\nPlease provide a clear and helpful answer based on the information above:"
+                result = self.pipeline(test_prompt, max_new_tokens=20, num_return_sequences=1)
             
-            return len(result) > 0 and len(result[0].get('generated_text', '')) > 0
+            # Check if we got a meaningful response
+            if len(result) > 0:
+                generated_text = result[0].get('generated_text', '')
+                if len(generated_text.strip()) > 5:
+                    return True
+            
+            return False
             
         except Exception as e:
             st.write(f"Model test failed: {e}")
@@ -167,14 +177,17 @@ class LocalTransformerLLM:
                     )
                     answer = result[0]['generated_text']
                 
+                # Debug: Show the raw response
+                st.write(f"🔍 Raw AI response: {answer[:100]}...")
+                
                 # Clean and format the answer
                 cleaned_answer = self._clean_answer(answer, question)
                 
-                if len(cleaned_answer.strip()) > 10:
+                if cleaned_answer is not None:
                     st.success("✅ Local AI response generated")
                     return cleaned_answer
                 else:
-                    st.warning("⚠️ Poor AI response, using enhanced fallback")
+                    st.warning("⚠️ AI response too short, using enhanced fallback")
                     return self._fallback_answer(context, question)
                     
         except Exception as e:
@@ -183,15 +196,23 @@ class LocalTransformerLLM:
     
     def _create_prompt(self, context: str, question: str) -> str:
         """Create appropriate prompt based on model type"""
+        # Truncate context if too long for the model
+        max_context_length = 800 if self.device == "cpu" else 1200
+        if len(context) > max_context_length:
+            context = context[:max_context_length] + "..."
+        
         if self.model_type == "seq2seq":
-            # For T5/FLAN models
-            return f"Answer the question based on the context below.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
+            # For T5/FLAN models - more structured prompt
+            return f"Based on the following context, answer the question clearly and concisely.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
         else:
-            # For GPT-style models
-            return f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
+            # For GPT-style models - conversational prompt
+            return f"Based on this document content:\n\n{context}\n\nQuestion: {question}\n\nPlease provide a clear and helpful answer based on the information above:"
     
     def _clean_answer(self, answer: str, question: str) -> str:
         """Clean and format the AI-generated answer"""
+        if not answer or len(answer.strip()) < 5:
+            return None  # Return None for very short answers
+        
         # Remove the prompt if it's included
         if "Context:" in answer:
             answer = answer.split("Answer:")[-1].strip()
@@ -203,30 +224,9 @@ class LocalTransformerLLM:
         if answer and not answer.endswith(('.', '!', '?')):
             answer += '.'
         
-        # If answer is too short, try to extract more meaningful content
+        # If answer is too short, return None to trigger fallback
         if len(answer) < 20:
-            # Look for sentences that might contain the answer
-            sentences = re.split(r'[.!?]+', answer)
-            unique_sentences = []
-            seen = set()
-            
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if sentence and sentence.lower() not in seen and len(sentence) > 5:
-                    unique_sentences.append(sentence)
-                    seen.add(sentence.lower())
-            
-            cleaned = '. '.join(unique_sentences[:3])
-            
-            # Ensure proper ending
-            if cleaned and not cleaned.endswith('.'):
-                cleaned += '.'
-            
-            # Add context if answer is too short
-            if len(cleaned) < 30:
-                cleaned += "\n\n(Note: This answer is based on the document content provided.)"
-            
-            return cleaned
+            return None
         
         return answer
     
@@ -239,12 +239,17 @@ class LocalTransformerLLM:
         stop_words = {'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'man', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'its', 'let', 'put', 'say', 'she', 'too', 'use', 'what', 'when', 'where', 'will', 'with'}
         question_words = {w for w in question_words if len(w) > 2 and w not in stop_words}
         
+        # If no specific keywords, use general terms
+        if not question_words:
+            question_words = {'document', 'content', 'information', 'text'}
+        
         # Find relevant sentences
         sentences = re.split(r'[.!?]+', context)
         scored_sentences = []
         
         for sentence in sentences:
-            if len(sentence.strip()) > 15:
+            sentence = sentence.strip()
+            if len(sentence) > 15:
                 sentence_words = set(re.findall(r'\b\w+\b', sentence.lower()))
                 overlap = len(question_words.intersection(sentence_words))
                 
@@ -253,21 +258,32 @@ class LocalTransformerLLM:
                     for word in question_words:
                         if word in sentence.lower():
                             overlap += 0.5
-                    scored_sentences.append((overlap, sentence.strip()))
+                    scored_sentences.append((overlap, sentence))
         
         if scored_sentences:
             scored_sentences.sort(key=lambda x: x[0], reverse=True)
-            top_sentences = [sent[1] for sent in scored_sentences[:2]]
+            top_sentences = [sent[1] for sent in scored_sentences[:3]]
             
-            # Generate contextual response
+            # Generate contextual response based on question type
             if any(kw in question.lower() for kw in ['how', 'implement', 'integrate', 'setup']):
                 return f"**Implementation Guide:**\n\n{'. '.join(top_sentences)}\n\n**Next Steps:** Follow the specific implementation steps mentioned in your documentation."
-            elif any(kw in question.lower() for kw in ['what', 'explain', 'describe']):
+            elif any(kw in question.lower() for kw in ['what', 'explain', 'describe', 'tell me about']):
+                return f"**Document Summary:**\n\n{'. '.join(top_sentences)}"
+            elif any(kw in question.lower() for kw in ['why', 'reason', 'cause']):
                 return f"**Explanation:**\n\n{'. '.join(top_sentences)}"
             else:
                 return f"**Based on the document:**\n\n{'. '.join(top_sentences)}"
         else:
-            return f"**Document Summary:**\n\n{context[:300]}...\n\n*Please ask a more specific question for better results.*"
+            # If no keyword matches, provide a general summary
+            # Split context into meaningful chunks
+            words = context.split()
+            if len(words) > 100:
+                # Take first 100 words for summary
+                summary = ' '.join(words[:100]) + "..."
+            else:
+                summary = context
+            
+            return f"**Document Content Summary:**\n\n{summary}\n\n*This appears to be a document with {len(words)} words. Please ask a more specific question for better results.*"
     
     def answer_from_documents(self, documents: List[Document], question: str) -> str:
         """Generate answer from retrieved documents"""
@@ -299,11 +315,12 @@ class SimpleLLM:
         scored_sentences = []
         
         for sentence in sentences:
-            if len(sentence.strip()) > 15:
+            sentence = sentence.strip()
+            if len(sentence) > 15:
                 sentence_words = set(re.findall(r'\b\w+\b', sentence.lower()))
                 overlap = len(question_words.intersection(sentence_words))
                 if overlap > 0:
-                    scored_sentences.append((overlap, sentence.strip()))
+                    scored_sentences.append((overlap, sentence))
         
         if scored_sentences:
             scored_sentences.sort(key=lambda x: x[0], reverse=True)
