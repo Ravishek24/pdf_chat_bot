@@ -168,12 +168,17 @@ class LocalTransformerLLM:
     
     def generate_answer(self, context: str, question: str) -> str:
         """Generate answer using local transformer model"""
+        st.write(f"🔍 Starting generate_answer with model: {self.model_name}, type: {self.model_type}")
+        st.write(f"🔍 Pipeline available: {self.pipeline is not None}")
+        
         if self.pipeline is None or self.model_type is None:
+            st.write("❌ Pipeline or model_type is None, using fallback")
             return self._fallback_answer(context, question)
         
         try:
             # Create prompt based on model type
             prompt = self._create_prompt(context, question)
+            st.write(f"🔍 Created prompt: {prompt[:100]}...")
             
             with st.spinner("🤖 Generating answer with local AI..."):
                 if self.model_type == "seq2seq":
@@ -198,7 +203,7 @@ class LocalTransformerLLM:
                             result = self.pipeline(
                                 prompt,
                                 max_new_tokens=300,  # Increased significantly for better responses
-                                min_length=100,       # Much higher min_length for complete answers
+                                min_length=30,        # Reduced from 100 to 30 for more responses
                                 do_sample=True,
                                 temperature=0.8 + (attempt * 0.1),  # Vary temperature slightly
                                 repetition_penalty=1.2, # Moderate repetition penalty
@@ -218,7 +223,7 @@ class LocalTransformerLLM:
                                 best_answer = current_answer
                             
                             # If we got a good answer, break early
-                            if len(current_answer.strip()) > 50:
+                            if len(current_answer.strip()) > 20:  # Reduced from 50 to 20
                                 break
                         
                         answer = best_answer
@@ -251,7 +256,7 @@ class LocalTransformerLLM:
                 else:
                     # Force AI response if it's available, even if short
                     st.warning("⚠️ AI response was short, but using it anyway")
-                    if answer and len(answer.strip()) > 10:  # Increased threshold for better quality
+                    if answer and len(answer.strip()) > 5:  # Reduced from 10 to 5
                         # Use the short AI response instead of fallback
                         cleaned_short = answer.strip()
                         
@@ -269,7 +274,7 @@ class LocalTransformerLLM:
                             cleaned_short += '.'
                         
                         # Only use if it looks reasonably complete
-                        if len(cleaned_short.split()) >= 3:  # At least 3 words
+                        if len(cleaned_short.split()) >= 2:  # Reduced from 3 to 2 words
                             return f"**🤖 AI Generated Response:**\n\n{cleaned_short}\n\n*This is an AI-generated answer based on your document.*"
                         else:
                             st.warning("⚠️ AI response too incomplete, using enhanced fallback")
@@ -329,6 +334,7 @@ class LocalTransformerLLM:
     def _clean_answer(self, answer: str, question: str) -> str:
         """Clean and format the AI-generated answer"""
         if not answer or len(answer.strip()) < 3:  # Reduced from 5 to 3
+            st.write(f"🔍 Answer too short: '{answer}'")
             return None  # Return None for very short answers
         
         # Remove the prompt if it's included
@@ -355,14 +361,19 @@ class LocalTransformerLLM:
         if answer and not answer.endswith(('.', '!', '?')):
             answer += '.'
         
+        st.write(f"🔍 After cleaning: '{answer}' (length: {len(answer)})")
+        
         # If answer is too short or looks incomplete, return None to trigger fallback
-        if len(answer) < 20:  # Increased threshold for better quality
+        if len(answer) < 15:  # Reduced from 20 to 15 for less strict validation
+            st.write(f"🔍 Answer too short after cleaning: {len(answer)} chars")
             return None
         
         # Check if the answer looks complete (ends with proper punctuation and has reasonable length)
-        if len(answer.split()) < 5:  # At least 5 words
+        if len(answer.split()) < 3:  # Reduced from 5 to 3 words
+            st.write(f"🔍 Answer too few words: {len(answer.split())} words")
             return None
         
+        st.write(f"✅ Answer accepted: {len(answer)} chars, {len(answer.split())} words")
         return answer
     
     def _fallback_answer(self, context: str, question: str) -> str:
