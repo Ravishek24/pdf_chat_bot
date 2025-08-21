@@ -180,14 +180,16 @@ class LocalTransformerLLM:
                         # Special parameters for DialoGPT
                         result = self.pipeline(
                             prompt,
-                            max_new_tokens=200,  # Increased from 150
-                            min_length=30,        # Added min_length
+                            max_new_tokens=250,  # Increased further for better responses
+                            min_length=50,        # Increased min_length for better quality
                             do_sample=True,
-                            temperature=0.8,      # Slightly higher temperature
-                            repetition_penalty=1.2, # Increased repetition penalty
+                            temperature=0.9,      # Higher temperature for more creative responses
+                            repetition_penalty=1.3, # Increased repetition penalty
                             num_return_sequences=1,
                             return_full_text=False,
-                            pad_token_id=self.tokenizer.eos_token_id
+                            pad_token_id=self.tokenizer.eos_token_id,
+                            top_k=50,             # Add top_k for better sampling
+                            top_p=0.9             # Add top_p for nucleus sampling
                         )
                     else:
                         # Standard parameters for other GPT models
@@ -218,12 +220,21 @@ class LocalTransformerLLM:
                 else:
                     # Force AI response if it's available, even if short
                     st.warning("⚠️ AI response was short, but using it anyway")
-                    if answer and len(answer.strip()) > 3:
+                    if answer and len(answer.strip()) > 5:  # Increased threshold slightly
                         # Use the short AI response instead of fallback
                         cleaned_short = answer.strip()
+                        
+                        # Clean up any remaining prompt artifacts
+                        if "Human:" in cleaned_short:
+                            cleaned_short = cleaned_short.split("Human:")[0].strip()
+                        if "Assistant:" in cleaned_short:
+                            cleaned_short = cleaned_short.split("Assistant:")[-1].strip()
+                        
                         if not cleaned_short.endswith(('.', '!', '?')):
                             cleaned_short += '.'
-                        return f"**AI Response:** {cleaned_short}\n\n*Note: This is a brief AI-generated answer.*"
+                        
+                        # Format the response nicely
+                        return f"**🤖 AI Generated Response:**\n\n{cleaned_short}\n\n*This is an AI-generated answer based on your document.*"
                     else:
                         st.warning("⚠️ AI response too short, using enhanced fallback")
                         st.write(f"🔍 Answer was rejected because it was too short")
@@ -248,6 +259,8 @@ class LocalTransformerLLM:
             task = "explain"
         elif any(word in question_lower for word in ['how', 'implement', 'steps']):
             task = "how_to"
+        elif any(word in question_lower for word in ['propose', 'proposal', 'suggest']):
+            task = "proposal"
         else:
             task = "general"
         
@@ -262,13 +275,15 @@ class LocalTransformerLLM:
             if "dialo" in self.model_name.lower():
                 # Special prompt for DialoGPT models
                 if task == "summarize":
-                    return f"Human: I have a document that says: {context}\n\nCan you provide a summary of this document?\n\nAssistant: Based on the document, here's a summary: "
+                    return f"Human: I have a document that says: {context}\n\nCan you provide a comprehensive summary of this document in 3-4 sentences?\n\nAssistant: Based on the document, here's a summary: "
+                elif task == "proposal":
+                    return f"Human: I have a document that says: {context}\n\nWhat does this document propose or suggest? Please explain in detail.\n\nAssistant: Based on the document, this proposes: "
                 else:
-                    return f"Human: I have a document that says: {context}\n\nBased on this document, can you answer: {question}\n\nAssistant: Based on the document, "
+                    return f"Human: I have a document that says: {context}\n\nBased on this document, can you answer: {question}\n\nPlease provide a detailed and helpful answer.\n\nAssistant: Based on the document, "
             else:
                 # Standard prompt for other GPT models
                 if task == "summarize":
-                    return f"Please provide a summary of the following document content:\n\n{context}\n\nSummary:"
+                    return f"Please provide a comprehensive summary of the following document content:\n\n{context}\n\nSummary:"
                 else:
                     return f"Based on this document content:\n\n{context}\n\nQuestion: {question}\n\nPlease provide a clear and helpful answer based on the information above:"
     
@@ -289,8 +304,17 @@ class LocalTransformerLLM:
             answer += '.'
         
         # If answer is too short, return None to trigger fallback
-        if len(answer) < 10:  # Reduced from 20 to 10
+        if len(answer) < 15:  # Increased from 10 to 15 for better quality
             return None
+        
+        # Additional cleaning for DialoGPT responses
+        if "Human:" in answer:
+            # Remove any remaining Human/Assistant parts
+            answer = answer.split("Human:")[0].strip()
+        
+        if "Assistant:" in answer:
+            # Remove Assistant prefix if present
+            answer = answer.split("Assistant:")[-1].strip()
         
         return answer
     
