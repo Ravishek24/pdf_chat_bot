@@ -190,20 +190,38 @@ class LocalTransformerLLM:
                 else:
                     # For GPT-style models - optimized for DialoGPT
                     if "dialo" in self.model_name.lower():
-                        # Special parameters for DialoGPT
-                        result = self.pipeline(
-                            prompt,
-                            max_new_tokens=250,  # Increased further for better responses
-                            min_length=50,        # Increased min_length for better quality
-                            do_sample=True,
-                            temperature=0.9,      # Higher temperature for more creative responses
-                            repetition_penalty=1.3, # Increased repetition penalty
-                            num_return_sequences=1,
-                            return_full_text=False,
-                            pad_token_id=self.tokenizer.eos_token_id,
-                            top_k=50,             # Add top_k for better sampling
-                            top_p=0.9             # Add top_p for nucleus sampling
-                        )
+                        # Try multiple times to get a good response
+                        best_answer = ""
+                        for attempt in range(3):  # Try up to 3 times
+                            st.write(f"🔄 AI generation attempt {attempt + 1}/3...")
+                            
+                            result = self.pipeline(
+                                prompt,
+                                max_new_tokens=300,  # Increased significantly for better responses
+                                min_length=100,       # Much higher min_length for complete answers
+                                do_sample=True,
+                                temperature=0.8 + (attempt * 0.1),  # Vary temperature slightly
+                                repetition_penalty=1.2, # Moderate repetition penalty
+                                num_return_sequences=1,
+                                return_full_text=False,
+                                pad_token_id=self.tokenizer.eos_token_id,
+                                top_k=50,             # Add top_k for better sampling
+                                top_p=0.9,            # Add top_p for nucleus sampling
+                                no_repeat_ngram_size=3, # Prevent repetitive n-grams
+                                early_stopping=True    # Stop when EOS token is generated
+                            )
+                            
+                            current_answer = result[0]['generated_text']
+                            
+                            # Choose the best answer (longest and most complete)
+                            if len(current_answer.strip()) > len(best_answer.strip()):
+                                best_answer = current_answer
+                            
+                            # If we got a good answer, break early
+                            if len(current_answer.strip()) > 50:
+                                break
+                        
+                        answer = best_answer
                     else:
                         # Standard parameters for other GPT models
                         result = self.pipeline(
@@ -215,7 +233,7 @@ class LocalTransformerLLM:
                             num_return_sequences=1,
                             return_full_text=False
                         )
-                    answer = result[0]['generated_text']
+                        answer = result[0]['generated_text']
                 
                 # Debug: Show the raw response
                 st.write(f"🔍 Raw AI response: {answer[:100]}...")
@@ -233,7 +251,7 @@ class LocalTransformerLLM:
                 else:
                     # Force AI response if it's available, even if short
                     st.warning("⚠️ AI response was short, but using it anyway")
-                    if answer and len(answer.strip()) > 5:  # Increased threshold slightly
+                    if answer and len(answer.strip()) > 10:  # Increased threshold for better quality
                         # Use the short AI response instead of fallback
                         cleaned_short = answer.strip()
                         
@@ -243,11 +261,19 @@ class LocalTransformerLLM:
                         if "Assistant:" in cleaned_short:
                             cleaned_short = cleaned_short.split("Assistant:")[-1].strip()
                         
+                        # Clean up incomplete sentences
+                        cleaned_short = re.sub(r'[.:]+$', '', cleaned_short)
+                        cleaned_short = re.sub(r'\s+[a-z]+[.:]*$', '', cleaned_short)
+                        
                         if not cleaned_short.endswith(('.', '!', '?')):
                             cleaned_short += '.'
                         
-                        # Format the response nicely
-                        return f"**🤖 AI Generated Response:**\n\n{cleaned_short}\n\n*This is an AI-generated answer based on your document.*"
+                        # Only use if it looks reasonably complete
+                        if len(cleaned_short.split()) >= 3:  # At least 3 words
+                            return f"**🤖 AI Generated Response:**\n\n{cleaned_short}\n\n*This is an AI-generated answer based on your document.*"
+                        else:
+                            st.warning("⚠️ AI response too incomplete, using enhanced fallback")
+                            return self._fallback_answer(context, question)
                     else:
                         st.warning("⚠️ AI response too short, using enhanced fallback")
                         st.write(f"🔍 Answer was rejected because it was too short")
@@ -288,11 +314,11 @@ class LocalTransformerLLM:
             if "dialo" in self.model_name.lower():
                 # Special prompt for DialoGPT models
                 if task == "summarize":
-                    return f"Human: I have a document that says: {context}\n\nCan you provide a comprehensive summary of this document in 3-4 sentences?\n\nAssistant: Based on the document, here's a summary: "
+                    return f"Human: I have a document that says: {context}\n\nCan you provide a comprehensive summary of this document in 3-4 sentences? Please make sure your response is complete and well-formed.\n\nAssistant: Based on the document, here's a summary: "
                 elif task == "proposal":
-                    return f"Human: I have a document that says: {context}\n\nWhat does this document propose or suggest? Please explain in detail.\n\nAssistant: Based on the document, this proposes: "
+                    return f"Human: I have a document that says: {context}\n\nWhat does this document propose or suggest? Please explain in detail with complete sentences.\n\nAssistant: Based on the document, this proposes: "
                 else:
-                    return f"Human: I have a document that says: {context}\n\nBased on this document, can you answer: {question}\n\nPlease provide a detailed and helpful answer.\n\nAssistant: Based on the document, "
+                    return f"Human: I have a document that says: {context}\n\nBased on this document, can you answer: {question}\n\nPlease provide a detailed and helpful answer with complete sentences. Make sure your response is well-formed and informative.\n\nAssistant: Based on the document, "
             else:
                 # Standard prompt for other GPT models
                 if task == "summarize":
@@ -312,14 +338,6 @@ class LocalTransformerLLM:
         # Remove extra whitespace and newlines
         answer = re.sub(r'\s+', ' ', answer).strip()
         
-        # Ensure proper sentence ending
-        if answer and not answer.endswith(('.', '!', '?')):
-            answer += '.'
-        
-        # If answer is too short, return None to trigger fallback
-        if len(answer) < 15:  # Increased from 10 to 15 for better quality
-            return None
-        
         # Additional cleaning for DialoGPT responses
         if "Human:" in answer:
             # Remove any remaining Human/Assistant parts
@@ -328,6 +346,22 @@ class LocalTransformerLLM:
         if "Assistant:" in answer:
             # Remove Assistant prefix if present
             answer = answer.split("Assistant:")[-1].strip()
+        
+        # Clean up incomplete sentences and artifacts
+        answer = re.sub(r'[.:]+$', '', answer)  # Remove trailing incomplete punctuation
+        answer = re.sub(r'\s+[a-z]+[.:]*$', '', answer)  # Remove trailing incomplete words
+        
+        # Ensure proper sentence ending
+        if answer and not answer.endswith(('.', '!', '?')):
+            answer += '.'
+        
+        # If answer is too short or looks incomplete, return None to trigger fallback
+        if len(answer) < 20:  # Increased threshold for better quality
+            return None
+        
+        # Check if the answer looks complete (ends with proper punctuation and has reasonable length)
+        if len(answer.split()) < 5:  # At least 5 words
+            return None
         
         return answer
     
