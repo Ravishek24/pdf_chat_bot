@@ -1,0 +1,10 @@
+# Updated requirements.txt - Windows compatible
+streamlit
+langchain
+PyPDF2
+sentence-transformers
+faiss-cpu
+huggingface-hub
+python-dotenv
+pandas
+numpy

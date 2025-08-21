@@ -1,0 +1,37 @@
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Streamlit
+.streamlit/
+
+# Data files
+data/*.pdf
+data/*.txt
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Vector stores
+*.faiss
+*.pkl
