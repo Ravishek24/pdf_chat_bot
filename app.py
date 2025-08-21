@@ -3,14 +3,13 @@ import os
 from dotenv import load_dotenv
 from src.pdf_processor import PDFProcessor
 from src.embeddings import EmbeddingManager
-from src.llm_client import HuggingFaceLLM, SimpleLLM
 
 # Load environment variables
 load_dotenv()
 
 # Page configuration
 st.set_page_config(
-    page_title="PDF Chatbot",
+    page_title="PDF Chatbot - Local AI",
     page_icon="📄",
     layout="wide"
 )
@@ -34,47 +33,58 @@ def load_components():
         model_name=os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     )
     
-    # Try to load HF LLM, fallback to simple LLM
+    # Try to load local transformer LLM
     llm_client = None
     llm_type = "Unknown"
     
     try:
-        if os.getenv("HF_TOKEN"):
-            llm_client = HuggingFaceLLM(
-                model_name=os.getenv("LLM_MODEL", "google/flan-t5-large"),
-                token=os.getenv("HF_TOKEN")
-            )
-            if llm_client.client:
-                llm_type = "Hugging Face API"
+        from src.llm_client import LocalTransformerLLM, SimpleLLM
+        
+        with st.spinner("🚀 Loading local AI model..."):
+            llm_client = LocalTransformerLLM()
+            
+            if llm_client.pipeline is not None:
+                llm_type = f"Local AI ({llm_client.model_name})"
+                st.success(f"✅ Local AI model loaded successfully!")
             else:
-                llm_type = "Fallback (HF failed)"
+                llm_type = "Enhanced Fallback"
                 llm_client = SimpleLLM()
-        else:
-            llm_type = "Simple Fallback (No HF Token)"
-            llm_client = SimpleLLM()
+                st.info("ℹ️ Using enhanced fallback system")
+                
     except Exception as e:
-        st.warning(f"⚠️ Failed to initialize HF LLM: {str(e)}")
-        llm_type = "Simple Fallback (Error)"
+        st.warning(f"⚠️ Could not load transformers: {str(e)}")
+        from src.llm_client import SimpleLLM
+        llm_type = "Simple Fallback"
         llm_client = SimpleLLM()
     
     return pdf_processor, embedding_manager, llm_client, llm_type
 
 def main():
-    st.title("📄 PDF Chatbot")
-    st.markdown("Upload a PDF document and ask questions about its content!")
+    st.title("📄 PDF Chatbot - Local AI")
+    st.markdown("Upload a PDF document and ask questions using **local AI models**!")
     
     # Load components
     pdf_processor, embedding_manager, llm_client, llm_type = load_components()
     
     # Display LLM status
-    if llm_type.startswith("Hugging Face"):
-        st.success(f"✅ Using {llm_type}")
+    if "Local AI" in llm_type:
+        st.success(f"🤖 {llm_type}")
+        st.info("💡 Your data stays completely private - no external API calls!")
     else:
-        st.info(f"ℹ️ Using {llm_type}")
+        st.info(f"🔄 {llm_type}")
     
     # Sidebar for PDF upload
     with st.sidebar:
         st.header("📁 Upload Document")
+        
+        # System info
+        with st.expander("🖥️ System Info"):
+            import torch
+            st.write(f"**Device**: {'GPU' if torch.cuda.is_available() else 'CPU'}")
+            if torch.cuda.is_available():
+                st.write(f"**GPU**: {torch.cuda.get_device_name()}")
+                st.write(f"**Memory**: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB")
+            st.write(f"**AI Model**: {llm_type}")
         
         uploaded_file = st.file_uploader(
             "Choose a PDF file",
@@ -123,7 +133,7 @@ def main():
             key="question_input"
         )
         
-        col1, col2 = st.columns([1, 4])
+        col1, col2, col3 = st.columns([1, 1, 3])
         with col1:
             ask_button = st.button("Ask Question", type="primary")
         with col2:
@@ -132,7 +142,7 @@ def main():
                 st.rerun()
         
         if ask_button and question:
-            with st.spinner("Thinking..."):
+            with st.spinner("🤖 AI is thinking..."):
                 try:
                     # Retrieve relevant documents
                     relevant_docs = st.session_state.embedding_manager.similarity_search(
@@ -155,7 +165,7 @@ def main():
                     # Try to provide a fallback answer
                     try:
                         fallback_answer = "I encountered an error processing your question. Let me try a different approach..."
-                        if relevant_docs:
+                        if 'relevant_docs' in locals() and relevant_docs:
                             fallback_answer += f"\n\nBased on the document content I found:\n\n{relevant_docs[0].page_content[:200]}..."
                         st.session_state.chat_history.append((question, fallback_answer))
                         st.rerun()
@@ -171,17 +181,28 @@ def main():
             1. **Upload PDF**: Use the sidebar to upload your PDF document
             2. **Process**: Click "Process Document" to prepare it for chat
             3. **Ask Questions**: Type questions about your document content
-            4. **Get Answers**: The AI will answer based on the document content
+            4. **Get Answers**: The local AI will answer based on the document content
             
-            **Note**: The app will automatically use the best available AI model. If Hugging Face API is unavailable, it will use a smart fallback system.
+            **Advantages of Local AI:**
+            - 🔒 **Complete Privacy**: Your data never leaves your computer
+            - ⚡ **No Rate Limits**: Use as much as you want
+            - 💰 **No Costs**: No API fees
+            - 🌐 **Works Offline**: No internet required after setup
             """)
         
-        # Show LLM status
-        with st.expander("🔧 System Status"):
-            st.markdown(f"""
-            - **LLM Type**: {llm_type}
-            - **HF Token**: {'✅ Set' if os.getenv("HF_TOKEN") else '❌ Not set'}
-            - **Status**: {'🟢 Ready' if llm_type.startswith("Hugging Face") else '🟡 Using Fallback'}
+        # Show performance tips
+        with st.expander("⚡ Performance Tips"):
+            st.markdown("""
+            **For Better Performance:**
+            - Use a computer with GPU for faster responses
+            - Smaller PDFs process faster
+            - Close other applications to free up memory
+            - The first response may be slower while the model loads
+            
+            **Model Information:**
+            - Small models (80-120M parameters): Fast, good for basic Q&A
+            - Medium models (250-345M parameters): Better quality, slower
+            - All models run locally and don't need internet
             """)
 
 if __name__ == "__main__":
