@@ -1,4 +1,4 @@
-# Updated requirements.txt - Windows compatible
+# Updated requirements.txt - Windows compatible with Local AI Support
 streamlit
 langchain
 PyPDF2
@@ -8,3 +8,15 @@ huggingface-hub
 python-dotenv
 pandas
 numpy
+
+# Local AI Model Support
+transformers>=4.30.0
+torch>=2.0.0
+accelerate>=0.20.0
+tokenizers>=0.13.0
+
+# Additional Dependencies for Better Performance
+scikit-learn
+scipy
+tqdm
+requests

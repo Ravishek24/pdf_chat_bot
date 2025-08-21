@@ -1,0 +1,12 @@
+# Minimal requirements.txt - Basic PDF Chatbot (No Local AI)
+# Use this if you have issues with transformers or want a lighter setup
+
+streamlit
+langchain
+PyPDF2
+sentence-transformers
+faiss-cpu
+python-dotenv
+pandas
+numpy
+requests

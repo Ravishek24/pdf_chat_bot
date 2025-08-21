@@ -13,6 +13,7 @@ class LocalTransformerLLM:
         self.tokenizer = None
         self.pipeline = None
         self.model_name = model_name
+        self.model_type = None  # Initialize model_type
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         
         st.info(f"🔧 Initializing local AI model on {self.device.upper()}")
@@ -134,7 +135,7 @@ class LocalTransformerLLM:
     
     def generate_answer(self, context: str, question: str) -> str:
         """Generate answer using local transformer model"""
-        if self.pipeline is None:
+        if self.pipeline is None or self.model_type is None:
             return self._fallback_answer(context, question)
         
         try:
@@ -177,57 +178,57 @@ class LocalTransformerLLM:
                     return self._fallback_answer(context, question)
                     
         except Exception as e:
-            st.warning(f"⚠️ Local AI failed: {str(e)}")
+            st.error(f"❌ Local AI error: {str(e)}")
             return self._fallback_answer(context, question)
     
     def _create_prompt(self, context: str, question: str) -> str:
         """Create appropriate prompt based on model type"""
-        # Truncate context to fit in model's context window
-        max_context_length = 400 if self.device == "cpu" else 800
-        
-        if len(context) > max_context_length:
-            # Try to keep the most relevant parts
-            context = context[:max_context_length] + "..."
-        
         if self.model_type == "seq2seq":
-            # T5/FLAN style prompt
-            prompt = f"Answer the question based on the context.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
+            # For T5/FLAN models
+            return f"Answer the question based on the context below.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
         else:
-            # GPT style prompt
-            prompt = f"Based on this document:\n\n{context}\n\nQuestion: {question}\nAnswer:"
-        
-        return prompt
+            # For GPT-style models
+            return f"Context: {context}\n\nQuestion: {question}\n\nAnswer:"
     
     def _clean_answer(self, answer: str, question: str) -> str:
-        """Clean and improve the generated answer"""
-        if not answer:
-            return "I couldn't generate a proper answer."
+        """Clean and format the AI-generated answer"""
+        # Remove the prompt if it's included
+        if "Context:" in answer:
+            answer = answer.split("Answer:")[-1].strip()
         
-        # Remove common artifacts
-        answer = answer.strip()
+        # Remove extra whitespace and newlines
+        answer = re.sub(r'\s+', ' ', answer).strip()
         
-        # Remove repetitive content
-        sentences = answer.split('.')
-        unique_sentences = []
-        seen = set()
+        # Ensure proper sentence ending
+        if answer and not answer.endswith(('.', '!', '?')):
+            answer += '.'
         
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if sentence and sentence.lower() not in seen and len(sentence) > 5:
-                unique_sentences.append(sentence)
-                seen.add(sentence.lower())
+        # If answer is too short, try to extract more meaningful content
+        if len(answer) < 20:
+            # Look for sentences that might contain the answer
+            sentences = re.split(r'[.!?]+', answer)
+            unique_sentences = []
+            seen = set()
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if sentence and sentence.lower() not in seen and len(sentence) > 5:
+                    unique_sentences.append(sentence)
+                    seen.add(sentence.lower())
+            
+            cleaned = '. '.join(unique_sentences[:3])
+            
+            # Ensure proper ending
+            if cleaned and not cleaned.endswith('.'):
+                cleaned += '.'
+            
+            # Add context if answer is too short
+            if len(cleaned) < 30:
+                cleaned += "\n\n(Note: This answer is based on the document content provided.)"
+            
+            return cleaned
         
-        cleaned = '. '.join(unique_sentences[:3])
-        
-        # Ensure proper ending
-        if cleaned and not cleaned.endswith('.'):
-            cleaned += '.'
-        
-        # Add context if answer is too short
-        if len(cleaned) < 30:
-            cleaned += "\n\n(Note: This answer is based on the document content provided.)"
-        
-        return cleaned
+        return answer
     
     def _fallback_answer(self, context: str, question: str) -> str:
         """Enhanced fallback when local model fails"""
