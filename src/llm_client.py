@@ -128,14 +128,24 @@ class LocalTransformerLLM:
                 result = self.pipeline(test_prompt, max_length=50, num_return_sequences=1)
             else:
                 # Test with a simple generation prompt
-                test_prompt = "Based on this document content:\n\nThis is a test document about artificial intelligence.\n\nQuestion: What is AI?\n\nPlease provide a clear and helpful answer based on the information above:"
-                result = self.pipeline(test_prompt, max_new_tokens=20, num_return_sequences=1)
+                if "dialo" in self.model_name.lower():
+                    # Test prompt for DialoGPT
+                    test_prompt = "Human: I have a document that says: This is a test document about artificial intelligence.\n\nBased on this document, can you answer: What is AI?\n\nAssistant: Based on the document, "
+                    result = self.pipeline(test_prompt, max_new_tokens=30, num_return_sequences=1)
+                else:
+                    # Test prompt for other GPT models
+                    test_prompt = "Based on this document content:\n\nThis is a test document about artificial intelligence.\n\nQuestion: What is AI?\n\nPlease provide a clear and helpful answer based on the information above:"
+                    result = self.pipeline(test_prompt, max_new_tokens=20, num_return_sequences=1)
             
             # Check if we got a meaningful response
             if len(result) > 0:
                 generated_text = result[0].get('generated_text', '')
                 if len(generated_text.strip()) > 5:
+                    st.write(f"✅ Model test successful: {generated_text[:50]}...")
                     return True
+                else:
+                    st.write(f"❌ Model test failed: Response too short ({len(generated_text)} chars)")
+                    return False
             
             return False
             
@@ -165,30 +175,59 @@ class LocalTransformerLLM:
                     )
                     answer = result[0]['generated_text']
                 else:
-                    # For GPT-style models
-                    result = self.pipeline(
-                        prompt,
-                        max_new_tokens=150,
-                        do_sample=True,
-                        temperature=0.7,
-                        repetition_penalty=1.1,
-                        num_return_sequences=1,
-                        return_full_text=False
-                    )
+                    # For GPT-style models - optimized for DialoGPT
+                    if "dialo" in self.model_name.lower():
+                        # Special parameters for DialoGPT
+                        result = self.pipeline(
+                            prompt,
+                            max_new_tokens=200,  # Increased from 150
+                            min_length=30,        # Added min_length
+                            do_sample=True,
+                            temperature=0.8,      # Slightly higher temperature
+                            repetition_penalty=1.2, # Increased repetition penalty
+                            num_return_sequences=1,
+                            return_full_text=False,
+                            pad_token_id=self.tokenizer.eos_token_id
+                        )
+                    else:
+                        # Standard parameters for other GPT models
+                        result = self.pipeline(
+                            prompt,
+                            max_new_tokens=150,
+                            do_sample=True,
+                            temperature=0.7,
+                            repetition_penalty=1.1,
+                            num_return_sequences=1,
+                            return_full_text=False
+                        )
                     answer = result[0]['generated_text']
                 
                 # Debug: Show the raw response
                 st.write(f"🔍 Raw AI response: {answer[:100]}...")
+                st.write(f"🔍 Response length: {len(answer)} characters")
+                st.write(f"🔍 Model type: {self.model_type}")
+                st.write(f"🔍 Model name: {self.model_name}")
                 
                 # Clean and format the answer
                 cleaned_answer = self._clean_answer(answer, question)
                 
                 if cleaned_answer is not None:
                     st.success("✅ Local AI response generated")
+                    st.write(f"🔍 Cleaned answer length: {len(cleaned_answer)} characters")
                     return cleaned_answer
                 else:
-                    st.warning("⚠️ AI response too short, using enhanced fallback")
-                    return self._fallback_answer(context, question)
+                    # Force AI response if it's available, even if short
+                    st.warning("⚠️ AI response was short, but using it anyway")
+                    if answer and len(answer.strip()) > 3:
+                        # Use the short AI response instead of fallback
+                        cleaned_short = answer.strip()
+                        if not cleaned_short.endswith(('.', '!', '?')):
+                            cleaned_short += '.'
+                        return f"**AI Response:** {cleaned_short}\n\n*Note: This is a brief AI-generated answer.*"
+                    else:
+                        st.warning("⚠️ AI response too short, using enhanced fallback")
+                        st.write(f"🔍 Answer was rejected because it was too short")
+                        return self._fallback_answer(context, question)
                     
         except Exception as e:
             st.error(f"❌ Local AI error: {str(e)}")
@@ -201,16 +240,41 @@ class LocalTransformerLLM:
         if len(context) > max_context_length:
             context = context[:max_context_length] + "..."
         
+        # Detect task type for better prompting
+        question_lower = question.lower()
+        if any(word in question_lower for word in ['summarize', 'summary', 'overview']):
+            task = "summarize"
+        elif any(word in question_lower for word in ['explain', 'describe', 'what is']):
+            task = "explain"
+        elif any(word in question_lower for word in ['how', 'implement', 'steps']):
+            task = "how_to"
+        else:
+            task = "general"
+        
         if self.model_type == "seq2seq":
             # For T5/FLAN models - more structured prompt
-            return f"Based on the following context, answer the question clearly and concisely.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
+            if task == "summarize":
+                return f"Summarize the following document content in a clear and concise way:\n\n{context}\n\nSummary:"
+            else:
+                return f"Based on the following context, answer the question clearly and concisely.\n\nContext: {context}\n\nQuestion: {question}\n\nAnswer:"
         else:
-            # For GPT-style models - conversational prompt
-            return f"Based on this document content:\n\n{context}\n\nQuestion: {question}\n\nPlease provide a clear and helpful answer based on the information above:"
+            # For GPT-style models - conversational prompt optimized for DialoGPT
+            if "dialo" in self.model_name.lower():
+                # Special prompt for DialoGPT models
+                if task == "summarize":
+                    return f"Human: I have a document that says: {context}\n\nCan you provide a summary of this document?\n\nAssistant: Based on the document, here's a summary: "
+                else:
+                    return f"Human: I have a document that says: {context}\n\nBased on this document, can you answer: {question}\n\nAssistant: Based on the document, "
+            else:
+                # Standard prompt for other GPT models
+                if task == "summarize":
+                    return f"Please provide a summary of the following document content:\n\n{context}\n\nSummary:"
+                else:
+                    return f"Based on this document content:\n\n{context}\n\nQuestion: {question}\n\nPlease provide a clear and helpful answer based on the information above:"
     
     def _clean_answer(self, answer: str, question: str) -> str:
         """Clean and format the AI-generated answer"""
-        if not answer or len(answer.strip()) < 5:
+        if not answer or len(answer.strip()) < 3:  # Reduced from 5 to 3
             return None  # Return None for very short answers
         
         # Remove the prompt if it's included
@@ -225,7 +289,7 @@ class LocalTransformerLLM:
             answer += '.'
         
         # If answer is too short, return None to trigger fallback
-        if len(answer) < 20:
+        if len(answer) < 10:  # Reduced from 20 to 10
             return None
         
         return answer
